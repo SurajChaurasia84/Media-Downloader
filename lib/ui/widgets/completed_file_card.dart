@@ -28,13 +28,40 @@ class CompletedFileCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: fileExists
-            ? () => OpenFilex.open(task.filePath)
-            : () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('File not found on device')),
-                );
-              },
+        onTap: () async {
+          if (!fileExists) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('File not found on device'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            return;
+          }
+
+          final size = await file.length();
+          if (size == 0) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('File is empty (0 B). Please delete and re-download.'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+            return;
+          }
+
+          final result = await OpenFilex.open(task.filePath);
+          if (result.type != ResultType.done && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Cannot play file: ${result.message}'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        },
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -88,34 +115,53 @@ class CompletedFileCard extends StatelessWidget {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '•',
-                          style: TextStyle(
-                            fontSize: 10,
+                        if (task.durationSeconds != null && task.durationSeconds! > 0) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '•',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.schedule,
+                            size: 12,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          task.completedAt != null
-                              ? Formatters.formatDate(task.completedAt!)
-                              : Formatters.formatDate(task.createdAt),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant,
+                          const SizedBox(width: 3),
+                          Text(
+                            Formatters.formatDuration(Duration(seconds: task.durationSeconds!)),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
+                        ] else if (task.quality.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '•',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            task.quality,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.play_arrow_rounded, size: 28),
-                color: const Color(0xFF7925F6),
-                onPressed: fileExists ? () => OpenFilex.open(task.filePath) : null,
-                tooltip: 'Play',
               ),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert, size: 20),
