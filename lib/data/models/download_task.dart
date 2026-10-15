@@ -23,6 +23,7 @@ class DownloadTask {
   double speed; // bytes per second
   DownloadStatus status;
   final DateTime createdAt;
+  final int? durationSeconds;
   DateTime? completedAt;
   bool isPrivate;
   String? error;
@@ -40,6 +41,7 @@ class DownloadTask {
     this.totalBytes,
     this.speed = 0,
     this.status = DownloadStatus.waiting,
+    this.durationSeconds,
     required this.createdAt,
     this.completedAt,
     this.isPrivate = false,
@@ -67,6 +69,7 @@ class DownloadTask {
       'file_path': filePath,
       'downloaded_bytes': downloadedBytes,
       'total_bytes': totalBytes,
+      'duration_seconds': durationSeconds,
       'status': status.name,
       'created_at': createdAt.millisecondsSinceEpoch,
       'completed_at': completedAt?.millisecondsSinceEpoch,
@@ -87,6 +90,7 @@ class DownloadTask {
       filePath: map['file_path'] as String,
       downloadedBytes: (map['downloaded_bytes'] as int?) ?? 0,
       totalBytes: map['total_bytes'] as int?,
+      durationSeconds: map['duration_seconds'] as int?,
       status: DownloadStatus.values.firstWhere(
         (s) => s.name == map['status'],
         orElse: () => DownloadStatus.failed,
