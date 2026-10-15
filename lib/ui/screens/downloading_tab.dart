@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/utils/url_validator.dart';
 import '../../providers/download_provider.dart';
-import '../../providers/settings_provider.dart';
+import '../../services/share_service.dart';
 import '../widgets/download_card.dart';
 import '../widgets/format_selection_sheet.dart';
 
@@ -11,27 +12,81 @@ class DownloadingTab extends StatefulWidget {
   const DownloadingTab({super.key});
 
   @override
-  State<DownloadingTab> createState() => _DownloadingTabState();
+  State<DownloadingTab> createState() => DownloadingTabState();
 }
 
-class _DownloadingTabState extends State<DownloadingTab> {
+class DownloadingTabState extends State<DownloadingTab> {
   final TextEditingController _urlController = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize share intent listener
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ShareService.initialize((sharedUrl) {
+        if (mounted) {
+          processUrl(sharedUrl);
+        }
+      });
+    });
+  }
+
+  Future<void> processUrl(String input) async {
+    final clean = UrlValidator.extractUrl(input) ?? input.trim();
+    if (clean.isEmpty) return;
+
+    setState(() {
+      _urlController.text = clean;
+    });
+    await _handleDownload();
+  }
+
+  Future<void> pasteAndDownload() async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text?.trim() ?? '';
+    final extracted = UrlValidator.extractUrl(text) ?? text;
+
+    if (UrlValidator.isValidUrl(extracted)) {
+      setState(() {
+        _urlController.text = extracted;
+      });
+      await _handleDownload();
+    } else if (_urlController.text.trim().isNotEmpty) {
+      await _handleDownload();
+    } else {
+      _focusNode.requestFocus();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No link found in clipboard'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _pasteUrl() async {
     final data = await Clipboard.getData('text/plain');
-    if (data?.text != null && data!.text!.isNotEmpty) {
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      final clean = UrlValidator.extractUrl(text) ?? text.trim();
       setState(() {
-        _urlController.text = data.text!.trim();
+        _urlController.text = clean;
       });
+      if (UrlValidator.isValidUrl(clean)) {
+        await _handleDownload();
+      }
     }
   }
 
   Future<void> _handleDownload() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
+    final rawUrl = _urlController.text.trim();
+    if (rawUrl.isEmpty) return;
 
+    final url = UrlValidator.extractUrl(rawUrl) ?? rawUrl;
     final downloadProv = context.read<DownloadProvider>();
-    final settingsProv = context.read<SettingsProvider>();
 
     final meta = await downloadProv.inspectUrl(url);
     if (!mounted) return;
@@ -44,45 +99,32 @@ class _DownloadingTabState extends State<DownloadingTab> {
       return;
     }
 
-    if (settingsProv.askBeforeDownload && meta.formats.length > 1) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => FormatSelectionSheet(
-          metadata: meta,
-          onSelect: (selectedFormat) {
-            downloadProv.startDownload(
-              url: meta.url,
-              title: meta.title,
-              format: selectedFormat,
-              thumbnailUrl: meta.thumbnailUrl,
-            );
-            _urlController.clear();
-          },
-        ),
-      );
-    } else {
-      // Direct download with default preference
-      final isAudio = settingsProv.defaultFormat == 'audio';
-      final format = meta.formats.firstWhere(
-        (f) => f.isAudioOnly == isAudio,
-        orElse: () => meta.formats.first,
-      );
-
-      downloadProv.startDownload(
-        url: meta.url,
-        title: meta.title,
-        format: format,
-        thumbnailUrl: meta.thumbnailUrl,
-      );
-      _urlController.clear();
-    }
+    // Always show format selection sheet with media details
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FormatSelectionSheet(
+        metadata: meta,
+        onSelect: (selectedFormat, isPrivate) {
+          downloadProv.startDownload(
+            url: meta.url,
+            title: meta.title,
+            format: selectedFormat,
+            thumbnailUrl: meta.thumbnailUrl,
+            duration: meta.duration,
+            isPrivate: isPrivate,
+          );
+          _urlController.clear();
+        },
+      ),
+    );
   }
 
   @override
   void dispose() {
     _urlController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -103,6 +145,7 @@ class _DownloadingTabState extends State<DownloadingTab> {
               Expanded(
                 child: TextField(
                   controller: _urlController,
+                  focusNode: _focusNode,
                   decoration: InputDecoration(
                     hintText: 'Paste URL here',
                     hintStyle: const TextStyle(fontSize: 14),
