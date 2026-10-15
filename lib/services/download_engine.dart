@@ -11,6 +11,8 @@ import '../data/database/app_database.dart';
 import '../data/models/download_task.dart';
 import '../data/models/media_format.dart';
 import '../data/preferences/settings_repository.dart';
+import 'media_extractor.dart';
+import 'ytdlp_service.dart';
 
 class DownloadEngine {
   final AppDatabase _db = AppDatabase();
@@ -59,6 +61,7 @@ class DownloadEngine {
     required String title,
     required MediaFormatOption format,
     String? thumbnailUrl,
+    int? durationSeconds,
     bool? isPrivate,
   }) async {
     final savePrivate = isPrivate ?? (_settings.defaultLocation == 'private');
@@ -66,24 +69,43 @@ class DownloadEngine {
         ? await getPrivateDownloadDir()
         : await getPublicDownloadDir();
 
-    final safeTitle = UrlValidator.sanitizeFileName(title);
-    final ext = format.extension.isNotEmpty ? format.extension : 'mp4';
-    final fileName = '${safeTitle}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final safeExt = (format.extension.isNotEmpty ? format.extension : 'mp4').replaceAll('.', '').toLowerCase();
+    
+    // Clean and sanitize title
+    var cleanTitle = UrlValidator.sanitizeFileName(title).replaceAll(RegExp(r'^\.+'), '').trim();
+    if (cleanTitle.toLowerCase().endsWith('.$safeExt')) {
+      cleanTitle = cleanTitle.substring(0, cleanTitle.length - (safeExt.length + 1)).trim();
+    }
+    if (cleanTitle.isEmpty ||
+        cleanTitle.toLowerCase() == 'mp4' ||
+        cleanTitle.toLowerCase() == 'm4a' ||
+        cleanTitle.toLowerCase() == 'mp3' ||
+        cleanTitle.toLowerCase() == 'video' ||
+        cleanTitle.toLowerCase() == 'audio') {
+      cleanTitle = 'Media_${DateTime.now().millisecondsSinceEpoch % 100000}';
+    }
+
+    final fileName = '${cleanTitle}_${DateTime.now().millisecondsSinceEpoch}.$safeExt';
     final targetPath = p.join(targetDir, fileName);
 
     final taskId = DateTime.now().millisecondsSinceEpoch.toString();
     final notificationId = taskId.hashCode.abs() % 100000;
 
+    final displayTitle = (title.trim().isEmpty || title.trim() == '.mp4' || title.trim() == 'mp4')
+        ? cleanTitle
+        : title;
+
     final task = DownloadTask(
       id: taskId,
       notificationId: notificationId,
       url: url,
-      title: title,
+      title: displayTitle,
       thumbnailUrl: thumbnailUrl,
       format: format.isAudioOnly ? 'audio' : 'video',
       quality: format.label,
       filePath: targetPath,
       totalBytes: format.sizeBytes,
+      durationSeconds: durationSeconds,
       status: DownloadStatus.waiting,
       createdAt: DateTime.now(),
       isPrivate: savePrivate,
@@ -125,7 +147,65 @@ class DownloadEngine {
     if (UrlValidator.isYouTube(task.url)) {
       await _downloadYouTube(task, partFile, existingBytes, allTasks);
     } else {
-      await _downloadHttp(task, partFile, existingBytes, allTasks);
+      final isSocial = task.url.contains('instagram.com') ||
+          task.url.contains('instagr.am') ||
+          task.url.contains('tiktok.com') ||
+          task.url.contains('facebook.com') ||
+          task.url.contains('fb.watch') ||
+          task.url.contains('twitter.com') ||
+          task.url.contains('x.com');
+
+      if (isSocial) {
+        await _downloadWithYtDlp(task, partFile, allTasks);
+      } else {
+        await _downloadHttp(task, partFile, existingBytes, allTasks);
+      }
+    }
+  }
+
+  Future<void> _downloadWithYtDlp(
+    DownloadTask task,
+    File partFile,
+    List<DownloadTask> allTasks,
+  ) async {
+    try {
+      task.status = DownloadStatus.downloading;
+      task.downloadedBytes = 0;
+      onTaskUpdated(task);
+
+      var lastReportTime = DateTime.now();
+
+      final success = await YtDlpService.downloadWithYtDlp(
+        url: task.url,
+        outputPath: partFile.path,
+        taskId: task.id,
+        onProgress: (progress, line) {
+          final now = DateTime.now();
+          if (now.difference(lastReportTime).inMilliseconds >= 750) {
+            lastReportTime = now;
+            if (partFile.existsSync()) {
+              task.downloadedBytes = partFile.lengthSync();
+            }
+            if (progress > 0) {
+              task.speed = 1024 * 1024;
+            }
+            _notifyProgress(task);
+            onTaskUpdated(task);
+          }
+        },
+      );
+
+      if (success && partFile.existsSync() && partFile.lengthSync() > 0) {
+        await _finalizeDownload(task, partFile, allTasks);
+      } else {
+        throw Exception('Download failed or empty file produced');
+      }
+    } catch (e) {
+      task.status = DownloadStatus.failed;
+      task.error = e.toString();
+      onTaskUpdated(task);
+      await _db.updateTask(task);
+      checkQueue(allTasks);
     }
   }
 
@@ -135,46 +215,86 @@ class DownloadEngine {
     int existingBytes,
     List<DownloadTask> allTasks,
   ) async {
-    YoutubeExplode? yt;
+    final yt = YoutubeExplode(httpClient: AppYoutubeHttpClient());
     try {
-      yt = YoutubeExplode();
-      final video = await yt.videos.get(task.url);
-      final manifest = await yt.videos.streamsClient.getManifest(video.id);
+      String? videoIdString = UrlValidator.extractYouTubeVideoId(task.url);
+      if (videoIdString == null) {
+        try {
+          videoIdString = VideoId.parseVideoId(task.url);
+        } catch (_) {}
+      }
+      if (videoIdString == null) {
+        throw Exception('Invalid YouTube URL');
+      }
+      final videoId = VideoId(videoIdString);
+
+      StreamManifest manifest;
+      try {
+        manifest = await yt.videos.streamsClient.getManifest(videoId);
+      } catch (e) {
+        if (e.toString().contains('RequestLimitExceeded') || e.toString().contains('429')) {
+          final fallbackYt = YoutubeExplode();
+          try {
+            manifest = await fallbackYt.videos.streamsClient.getManifest(videoId);
+          } finally {
+            fallbackYt.close();
+          }
+        } else {
+          rethrow;
+        }
+      }
 
       StreamInfo? streamInfo;
       if (task.format == 'audio') {
         streamInfo = manifest.audioOnly.withHighestBitrate();
       } else {
-        // Try muxed first
+        // Try muxed first for matching quality
         final muxed = manifest.muxed.sortByVideoQuality();
-        if (muxed.isNotEmpty) {
-          streamInfo = muxed.first;
+        final matchedMuxed = muxed.where(
+          (m) =>
+              '${m.qualityLabel} (${m.container.name.toUpperCase()})' == task.quality ||
+              m.qualityLabel == task.quality ||
+              task.quality.startsWith(m.qualityLabel),
+        );
+        if (matchedMuxed.isNotEmpty) {
+          streamInfo = matchedMuxed.first;
         } else {
+          // Check videoOnly
           final videoOnly = manifest.videoOnly.sortByVideoQuality();
-          if (videoOnly.isNotEmpty) streamInfo = videoOnly.first;
+          final matchedVideo = videoOnly.where(
+            (v) =>
+                '${v.qualityLabel} (${v.container.name.toUpperCase()})' == task.quality ||
+                v.qualityLabel == task.quality ||
+                task.quality.startsWith(v.qualityLabel),
+          );
+          if (matchedVideo.isNotEmpty) {
+            streamInfo = matchedVideo.first;
+          } else if (muxed.isNotEmpty) {
+            streamInfo = muxed.first;
+          } else if (videoOnly.isNotEmpty) {
+            streamInfo = videoOnly.first;
+          }
         }
       }
 
       if (streamInfo == null) {
-        throw Exception('Stream not found');
+        throw Exception('Stream not found for ${task.quality}');
       }
 
       task.totalBytes = streamInfo.size.totalBytes;
+      task.downloadedBytes = 0;
       task.status = DownloadStatus.downloading;
       onTaskUpdated(task);
 
       final stream = yt.videos.streamsClient.get(streamInfo);
-      final sink = partFile.openWrite(
-        mode: existingBytes > 0 && existingBytes == task.downloadedBytes
-            ? FileMode.append
-            : FileMode.write,
-      );
+      // Youtube Explode streams from byte 0, so write fresh to avoid file corruption
+      final sink = partFile.openWrite(mode: FileMode.write);
       _activeSinks[task.id] = sink;
 
       int bytesCounter = 0;
       var lastTick = DateTime.now();
       _lastReportedTime[task.id] = DateTime.now().millisecondsSinceEpoch;
-      _lastReportedBytes[task.id] = task.downloadedBytes;
+      _lastReportedBytes[task.id] = 0;
 
       final sub = stream.listen(
         (chunk) {
@@ -197,7 +317,7 @@ class DownloadEngine {
           await sink.close();
           _activeSinks.remove(task.id);
           _activeSubscriptions.remove(task.id);
-          yt?.close();
+          yt.close();
 
           await _finalizeDownload(task, partFile, allTasks);
         },
@@ -205,7 +325,7 @@ class DownloadEngine {
           await sink.close();
           _activeSinks.remove(task.id);
           _activeSubscriptions.remove(task.id);
-          yt?.close();
+          yt.close();
 
           task.status = DownloadStatus.failed;
           task.error = err.toString();
@@ -218,7 +338,7 @@ class DownloadEngine {
 
       _activeSubscriptions[task.id] = sub;
     } catch (e) {
-      yt?.close();
+      yt.close();
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       onTaskUpdated(task);
@@ -238,6 +358,13 @@ class DownloadEngine {
 
     try {
       final request = http.Request('GET', Uri.parse(task.url));
+      request.headers['User-Agent'] =
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      request.headers['Accept'] = '*/*';
+      request.headers['Connection'] = 'keep-alive';
+      request.followRedirects = true;
+      request.maxRedirects = 5;
+
       if (existingBytes > 0) {
         request.headers['Range'] = 'bytes=$existingBytes-';
       }
@@ -256,7 +383,7 @@ class DownloadEngine {
           task.totalBytes = existingBytes + total;
         }
       } else {
-        throw Exception('Server returned ${response.statusCode}');
+        throw Exception('Server returned ${response.statusCode}: ${response.reasonPhrase ?? 'Request failed'}');
       }
 
       task.status = DownloadStatus.downloading;
@@ -342,11 +469,27 @@ class DownloadEngine {
     onTaskUpdated(task);
 
     if (await partFile.exists()) {
+      final partLen = await partFile.length();
+      if (partLen == 0) {
+        task.status = DownloadStatus.failed;
+        task.error = 'Downloaded file is empty (0 bytes)';
+        onTaskUpdated(task);
+        await _db.updateTask(task);
+        checkQueue(allTasks);
+        return;
+      }
+
       final finalFile = File(task.filePath);
       if (await finalFile.exists()) {
         await finalFile.delete();
       }
-      await partFile.rename(task.filePath);
+      try {
+        await partFile.rename(task.filePath);
+      } catch (_) {
+        await partFile.copy(task.filePath);
+        await partFile.delete();
+      }
+      task.downloadedBytes = partLen;
     }
 
     task.status = DownloadStatus.completed;
