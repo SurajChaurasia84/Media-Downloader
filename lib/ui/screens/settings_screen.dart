@@ -82,7 +82,7 @@ class SettingsScreen extends StatelessWidget {
                   trailing: SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(value: 'public', label: Text('Public')),
-                      ButtonSegment(value: 'private', label: Text('Vault')),
+                      ButtonSegment(value: 'private', label: Text('Private')),
                     ],
                     selected: {settingsProv.defaultLocation},
                     onSelectionChanged: (set) => settingsProv.setDefaultLocation(set.first),
@@ -91,6 +91,13 @@ class SettingsScreen extends StatelessWidget {
                       visualDensity: VisualDensity.compact,
                     ),
                   ),
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: const Text('Floating button', style: TextStyle(fontSize: 14)),
+                  value: settingsProv.floatingButtonEnabled,
+                  onChanged: settingsProv.setFloatingButtonEnabled,
+                  activeThumbColor: const Color(0xFF7925F6),
                 ),
               ],
             ),
@@ -125,22 +132,24 @@ class SettingsScreen extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.shield_outlined, color: Color(0xFF7925F6)),
-              title: const Text('Vault PIN', style: TextStyle(fontSize: 14)),
+              title: const Text('Security PIN', style: TextStyle(fontSize: 14)),
               trailing: OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
                 onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (_) => PinDialog(
-                      isSettingPin: true,
-                      onSuccess: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('PIN updated successfully')),
-                        );
-                      },
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PinScreen(
+                        isSettingPin: true,
+                        onSuccess: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('PIN updated successfully')),
+                          );
+                        },
+                      ),
                     ),
                   );
                 },
