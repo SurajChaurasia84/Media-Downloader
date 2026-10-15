@@ -127,6 +127,16 @@ class DownloadCard extends StatelessWidget {
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
+                          if (task.durationSeconds != null && task.durationSeconds! > 0) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '• ${Formatters.formatDuration(Duration(seconds: task.durationSeconds!))}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],
