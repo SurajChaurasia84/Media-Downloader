@@ -347,9 +347,17 @@ void main() {
   });
 
   group('8. Utilities (UrlValidator & Formatters)', () {
-    test('validates standard URLs and YouTube links', () {
+    test('validates standard URLs, YouTube Shorts, and shared links', () {
       expect(UrlValidator.isValidUrl('https://example.com/video.mp4'), isTrue);
       expect(UrlValidator.isYouTube('https://youtu.be/dQw4w9WgXcQ'), isTrue);
+      expect(UrlValidator.isYouTube('https://www.youtube.com/shorts/3i_JmO9a5oU'), isTrue);
+      expect(UrlValidator.isYouTube('youtu.be/dQw4w9WgXcQ'), isTrue);
+      expect(UrlValidator.isYouTube('https://youtube.com/live/dQw4w9WgXcQ?feature=share'), isTrue);
+      expect(UrlValidator.extractYouTubeVideoId('https://www.youtube.com/shorts/3i_JmO9a5oU'), '3i_JmO9a5oU');
+      expect(UrlValidator.extractYouTubeVideoId('https://youtu.be/dQw4w9WgXcQ?si=abc12345678'), 'dQw4w9WgXcQ');
+      expect(UrlValidator.extractYouTubeVideoId('https://youtube.com/live/dQw4w9WgXcQ?feature=share'), 'dQw4w9WgXcQ');
+      expect(UrlValidator.extractYouTubeVideoId('https://www.youtube.com/embed/dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+      expect(UrlValidator.extractUrl('Check out https://youtu.be/dQw4w9WgXcQ now!'), 'https://youtu.be/dQw4w9WgXcQ');
       expect(UrlValidator.isValidUrl('invalid-url'), isFalse);
     });
 
