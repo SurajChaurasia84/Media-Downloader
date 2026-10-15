@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/download_provider.dart';
+import '../../providers/settings_provider.dart';
 import 'downloading_tab.dart';
 import 'downloads_tab.dart';
 import 'settings_screen.dart';
@@ -15,6 +16,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final GlobalKey<DownloadingTabState> _downloadingKey = GlobalKey<DownloadingTabState>();
 
   @override
   void initState() {
@@ -28,9 +30,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  void _onFloatingAction() {
+    if (_tabController.index != 0) {
+      _tabController.animateTo(0);
+    }
+    _downloadingKey.currentState?.pasteAndDownload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final downloadProv = context.watch<DownloadProvider>();
+    final settingsProv = context.watch<SettingsProvider>();
     final activeCount = downloadProv.activeTasks.length;
 
     return Scaffold(
@@ -90,11 +100,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
+      floatingActionButton: settingsProv.floatingButtonEnabled
+          ? FloatingActionButton.extended(
+              backgroundColor: const Color(0xFF7925F6),
+              foregroundColor: Colors.white,
+              elevation: 4,
+              icon: const Icon(Icons.add_link_rounded, size: 20),
+              label: const Text(
+                'Paste & Download',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              onPressed: _onFloatingAction,
+            )
+          : null,
       body: TabBarView(
         controller: _tabController,
-        children: const [
-          DownloadingTab(),
-          DownloadsTab(),
+        children: [
+          DownloadingTab(key: _downloadingKey),
+          const DownloadsTab(),
         ],
       ),
     );
