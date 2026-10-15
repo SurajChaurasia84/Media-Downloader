@@ -26,25 +26,29 @@ class _DownloadsTabState extends State<DownloadsTab> {
     if (!mounted) return;
 
     if (!hasPin) {
-      showDialog(
-        context: context,
-        builder: (_) => PinDialog(
-          isSettingPin: true,
-          onSuccess: () {
-            downloadProv.unlockVault();
-            setState(() => _filter = 'vault');
-          },
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PinScreen(
+            isSettingPin: true,
+            onSuccess: () {
+              downloadProv.unlockVault();
+              setState(() => _filter = 'vault');
+            },
+          ),
         ),
       );
     } else {
-      showDialog(
-        context: context,
-        builder: (_) => PinDialog(
-          isSettingPin: false,
-          onSuccess: () {
-            downloadProv.unlockVault();
-            setState(() => _filter = 'vault');
-          },
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PinScreen(
+            isSettingPin: false,
+            onSuccess: () {
+              downloadProv.unlockVault();
+              setState(() => _filter = 'vault');
+            },
+          ),
         ),
       );
     }
@@ -116,7 +120,7 @@ class _DownloadsTabState extends State<DownloadsTab> {
                       const SizedBox(width: 6),
                       _buildChip('audio', 'Audio'),
                       const SizedBox(width: 6),
-                      _buildChip('vault', 'Vault', isLock: true),
+                      _buildChip('vault', 'Private', isLock: true),
                     ],
                   ),
                 ),
@@ -160,7 +164,7 @@ class _DownloadsTabState extends State<DownloadsTab> {
                         ),
                         const SizedBox(height: 12),
                         const Text(
-                          'Vault is Locked',
+                          'Private is Locked',
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                         const SizedBox(height: 12),
@@ -173,7 +177,7 @@ class _DownloadsTabState extends State<DownloadsTab> {
                           ),
                           onPressed: _openVault,
                           icon: const Icon(Icons.key, size: 18),
-                          label: const Text('Unlock Vault'),
+                          label: const Text('Unlock'),
                         ),
                       ],
                     ),
@@ -190,7 +194,7 @@ class _DownloadsTabState extends State<DownloadsTab> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              isVault ? 'Vault is empty' : 'No downloads yet',
+                              isVault ? 'No private files' : 'No downloads yet',
                               style: TextStyle(
                                 color: Colors.grey.withValues(alpha: 0.8),
                                 fontSize: 14,
