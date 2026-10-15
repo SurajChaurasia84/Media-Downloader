@@ -22,7 +22,7 @@ class AppDatabase {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -40,9 +40,17 @@ class AppDatabase {
             created_at INTEGER NOT NULL,
             completed_at INTEGER,
             is_private INTEGER NOT NULL DEFAULT 0,
+            duration_seconds INTEGER,
             error TEXT
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          try {
+            await db.execute('ALTER TABLE tasks ADD COLUMN duration_seconds INTEGER');
+          } catch (_) {}
+        }
       },
     );
   }
