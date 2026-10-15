@@ -88,7 +88,8 @@ class DownloadProvider extends ChangeNotifier {
   }
 
   Future<MediaMetadata?> inspectUrl(String url) async {
-    if (!UrlValidator.isValidUrl(url)) {
+    final cleanUrl = UrlValidator.extractUrl(url) ?? url.trim();
+    if (!UrlValidator.isValidUrl(cleanUrl)) {
       _inspectError = 'Invalid URL';
       notifyListeners();
       return null;
@@ -100,13 +101,22 @@ class DownloadProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final meta = await _extractor.extractMetadata(url);
+      final meta = await _extractor.extractMetadata(cleanUrl);
       _currentMetadata = meta;
       _isInspecting = false;
       notifyListeners();
       return meta;
     } catch (e) {
-      _inspectError = 'Failed to load media info';
+      debugPrint('Media extraction failed: $e');
+      final errStr = e.toString();
+      if (errStr.contains('RequestLimitExceeded') ||
+          errStr.contains('rate limiting') ||
+          errStr.contains('429')) {
+        _inspectError = 'YouTube rate limit reached. Please wait a moment or toggle mobile data / Wi-Fi.';
+      } else {
+        final msg = errStr.replaceAll('Exception: ', '').replaceAll('ArgumentError: ', '');
+        _inspectError = msg.isNotEmpty ? msg : 'Failed to load media info';
+      }
       _isInspecting = false;
       notifyListeners();
       return null;
@@ -124,6 +134,7 @@ class DownloadProvider extends ChangeNotifier {
     required String title,
     required MediaFormatOption format,
     String? thumbnailUrl,
+    Duration? duration,
     bool? isPrivate,
   }) async {
     // Avoid starting duplicate if already running identical url
@@ -149,6 +160,7 @@ class DownloadProvider extends ChangeNotifier {
       title: title,
       format: format,
       thumbnailUrl: thumbnailUrl,
+      durationSeconds: duration?.inSeconds,
       isPrivate: isPrivate,
     );
 
@@ -217,7 +229,13 @@ class DownloadProvider extends ChangeNotifier {
     final fileName = p.basename(task.filePath);
     final targetPath = p.join(targetDir, fileName);
 
-    await currentFile.rename(targetPath);
+    try {
+      await currentFile.rename(targetPath);
+    } catch (_) {
+      // Cross-device link fallback (copy & delete) across different mount points
+      await currentFile.copy(targetPath);
+      await currentFile.delete();
+    }
 
     task.filePath = targetPath;
     task.isPrivate = !task.isPrivate;
